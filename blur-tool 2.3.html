@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Маска">
+<title>МАСКА — размытие областей видео</title>
+<style>
+  :root{
+    --ink:#0b0b0d;
+    --panel:#151518;
+    --panel-2:#1c1c20;
+    --line:#2a2a2f;
+    --amber:#f5c518;
+    --amber-dim:#a88b1a;
+    --teal:#4fd1c5;
+    --text:#eceae4;
+    --text-dim:#8c8a86;
+    --danger:#e5484d;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    min-height:100vh;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .wrap{max-width:640px; margin:0 auto; padding:20px 16px 48px;}
+
+  header{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:22px; border-bottom:1px solid var(--line); padding-bottom:14px;}
+  .logo{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-weight:700; font-size:20px; letter-spacing:0.02em;}
+  .logo span{color:var(--amber);}
+  .tag{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px; color:var(--text-dim); letter-spacing:0.04em;}
+
+  .stage{
+    position:relative;
+    width:100%;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:2px;
+    overflow:hidden;
+    touch-action:none;
+  }
+  .stage-inner{position:relative; width:100%; line-height:0; overflow:hidden;}
+  .stage-inner video, .stage-inner canvas{
+    position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:block;
+  }
+  .stage-inner canvas{display:none;}
+  .stage-inner.processing video{opacity:0;}
+  .stage-inner.processing canvas{display:block;}
+  .stage-inner.processing .zones-layer{display:none;}
+
+  .zones-layer{position:absolute; inset:0;}
+
+  .empty{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:10px; padding:64px 20px; text-align:center; color:var(--text-dim);
+    font-size:13px;
+  }
+  .empty svg{opacity:0.5;}
+
+  .loading{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:10px; padding:56px 20px; text-align:center; color:var(--text-dim); font-size:13px;
+  }
+  .loading-note{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:10.5px; max-width:340px; line-height:1.5; opacity:0.8;}
+  .spinner{
+    width:26px; height:26px; border-radius:50%;
+    border:2px solid var(--line); border-top-color:var(--amber);
+    animation:spin 0.8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .crop{
+    position:absolute; border:1.5px solid var(--amber);
+    background:rgba(245,197,24,0.08);
+    touch-action:none;
+  }
+  .crop.dimmed{opacity:0.32; pointer-events:none;}
+  .crop.out-of-range{border-style:dashed;}
+  .corner{position:absolute; width:22px; height:22px; pointer-events:none;}
+  .corner::before, .corner::after{content:""; position:absolute; background:var(--amber);}
+  .corner.tl{top:-1.5px; left:-1.5px;}
+  .corner.tr{top:-1.5px; right:-1.5px;}
+  .corner.bl{bottom:-1.5px; left:-1.5px;}
+  .corner.br{bottom:-1.5px; right:-1.5px;}
+  .corner.tl::before, .corner.tr::before, .corner.bl::before, .corner.br::before{width:14px; height:3px;}
+  .corner.tl::after, .corner.tr::after, .corner.bl::after, .corner.br::after{width:3px; height:14px;}
+  .corner.tl::before, .corner.tl::after{top:0; left:0;}
+  .corner.tr::before{top:0; right:0;} .corner.tr::after{top:0; right:0;}
+  .corner.bl::before{bottom:0; left:0;} .corner.bl::after{bottom:0; left:0;}
+  .corner.br::before{bottom:0; right:0;} .corner.br::after{bottom:0; right:0;}
+  .zone-label{
+    position:absolute; top:-20px; left:-1.5px; font-size:10.5px;
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    color:var(--amber); background:var(--ink); padding:1px 5px; white-space:nowrap;
+  }
+
+  .handle{
+    position:absolute; width:26px; height:26px; right:-13px; bottom:-13px;
+    border-radius:50%; background:var(--amber); border:2px solid var(--ink);
+    touch-action:none;
+  }
+
+  .scrub-wrap{margin-top:10px;}
+  .kf-track{position:relative; height:10px; margin-bottom:2px;}
+  .kf-dot{
+    position:absolute; top:2px; width:6px; height:6px; border-radius:50%;
+    background:var(--amber); transform:translateX(-50%);
+  }
+  #scrubBar{margin:0; width:100%;}
+
+  .readout{
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px; color:var(--text-dim);
+    display:flex; justify-content:space-between; margin-top:8px; letter-spacing:0.02em;
+  }
+  .readout .rec{color:var(--danger); display:flex; align-items:center; gap:6px;}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--danger); animation:pulse 1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:0.25;}}
+
+  section{margin-top:22px;}
+  label.field-label{
+    display:block; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px;
+    color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;
+  }
+  input[type=range]{
+    -webkit-appearance:none; width:100%; height:2px; background:var(--line); outline:none; margin:6px 0;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
+    background:var(--amber); cursor:pointer; margin-top:-7px;
+    box-shadow:0 0 0 4px rgba(245,197,24,0.15);
+  }
+  .row{display:flex; align-items:center; justify-content:space-between;}
+  .val{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; color:var(--amber); font-size:13px;}
+
+  button{
+    font-family:inherit; font-weight:600; font-size:14px;
+    border:1px solid var(--line); background:var(--panel-2); color:var(--text);
+    padding:13px 18px; border-radius:2px; width:100%; cursor:pointer;
+    transition:border-color 0.15s, background 0.15s;
+  }
+  button:active{background:var(--line);}
+  button:focus-visible{outline:2px solid var(--amber); outline-offset:2px;}
+  button.primary{background:var(--amber); border-color:var(--amber); color:#1a1500;}
+  button.primary:disabled{background:var(--panel-2); border-color:var(--line); color:var(--text-dim); cursor:not-allowed;}
+  button.ghost{background:transparent;}
+  button.danger{border-color:var(--danger); color:var(--danger); background:transparent;}
+  .btn-row{display:flex; gap:10px; margin-top:10px;}
+  .btn-row > *{flex:1;}
+
+  .progress-wrap{margin-top:14px;}
+  .bar{height:3px; background:var(--line); border-radius:2px; overflow:hidden;}
+  .bar-fill{height:100%; background:var(--amber); width:0%; transition:width 0.15s linear;}
+
+  .note{font-size:12px; color:var(--text-dim); line-height:1.5; margin-top:8px;}
+  .error{font-size:13px; color:var(--danger); margin-top:10px; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;}
+
+  .result{margin-top:18px; display:none;}
+  .result.show{display:block;}
+
+  footer{margin-top:36px; padding-top:16px; border-top:1px solid var(--line); font-size:11px; color:var(--text-dim); line-height:1.6; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;}
+
+  input[type=file]{display:none;}
+
+  /* Зоны */
+  .zones-row{display:flex; gap:8px; overflow-x:auto; margin-top:10px; padding-bottom:2px;}
+  .zone-chip{
+    display:flex; align-items:center; gap:7px; flex-shrink:0; white-space:nowrap;
+    padding:9px 10px; border:1px solid var(--line); border-radius:2px; background:var(--panel-2);
+    font-size:13px; color:var(--text-dim); cursor:pointer;
+  }
+  .zone-chip.active{border-color:var(--amber); color:var(--amber);}
+  .zone-chip .del{opacity:0.6; font-size:15px; line-height:1; padding:0 2px;}
+  .zone-chip .del:active{opacity:1;}
+
+  .zone-panel{margin-top:14px; padding:14px; border:1px solid var(--line); background:var(--panel-2); border-radius:2px;}
+  .zone-panel-title{font-size:13px; font-weight:600; color:var(--amber); margin-bottom:2px;}
+  .zone-panel-sub{font-size:11.5px; color:var(--text-dim); font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; margin-bottom:10px;}
+  .zone-panel-row{display:flex; gap:8px; margin-top:8px;}
+  .zone-panel-row button{flex:1; padding:10px 8px; font-size:12.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">МАСК<span>А</span></div>
+    <div class="tag">НЕСКОЛЬКО ЗОН · В БРАУЗЕРЕ</div>
+  </header>
+
+  <div class="stage" id="stage">
+    <div class="empty" id="emptyState">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="5" width="15" height="14" rx="1"/><path d="M17 9l5-3v12l-5-3"/></svg>
+      <div>Видео ещё не выбрано<br>Поддерживаются ролики любой длины</div>
+    </div>
+    <div class="loading" id="loadingState" style="display:none;">
+      <div class="spinner"></div>
+      <div>Загружаем видео…</div>
+      <div class="loading-note">Если видео из iCloud или снято в 4K/HEVC — это шаг делает сам iOS, до браузера, и может занять время</div>
+    </div>
+    <div class="stage-inner" id="stageInner" style="display:none;">
+      <video id="sourceVideo" playsinline muted preload="metadata"></video>
+      <canvas id="previewCanvas"></canvas>
+      <div class="zones-layer" id="zonesLayer"></div>
+    </div>
+  </div>
+
+  <div class="scrub-wrap" id="scrubWrap" style="display:none;">
+    <div class="kf-track" id="kfTrack"></div>
+    <input type="range" id="scrubBar" min="0" max="1" step="0.001" value="0">
+  </div>
+  <div class="readout" id="readout" style="display:none;">
+    <span id="timeReadout">00:00 / 00:00</span>
+    <span class="rec" id="recIndicator" style="visibility:hidden;"><span class="dot"></span>ОБРАБОТКА</span>
+  </div>
+
+  <div class="error" id="importErrorBox" style="display:none; margin-top:10px;"></div>
+
+  <section>
+    <input type="file" id="fileInput" accept="video/*">
+    <button class="ghost" id="pickBtn">Выбрать видео</button>
+  </section>
+
+  <section id="zonesSection" style="display:none;">
+    <label class="field-label">Зоны размытия</label>
+    <button class="primary" id="addZoneBtn" type="button">+ Добавить зону размытия</button>
+    <div class="zones-row" id="zonesRow"></div>
+
+    <div class="zone-panel" id="zonePanel" style="display:none;">
+      <div class="zone-panel-title" id="zonePanelTitle">Зона 1</div>
+      <div class="zone-panel-sub" id="zonePanelSub">активна: 00:00 — до конца</div>
+      <div class="note">Перемотай на нужный момент и подвинь рамку — новое положение запомнится именно для этого момента. Между такими точками зона будет плавно двигаться.</div>
+      <div class="zone-panel-row">
+        <button type="button" id="btnSetStart">Начать здесь</button>
+        <button type="button" id="btnSetEnd">Закончить здесь</button>
+      </div>
+      <div class="zone-panel-row">
+        <button type="button" id="btnResetRange">На всё видео</button>
+        <button type="button" class="danger" id="btnDeleteZone">Удалить зону</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="controls" style="display:none;">
+    <label class="field-label">Сила размытия</label>
+    <div class="row"><span></span><span class="val" id="blurVal">80</span></div>
+    <input type="range" id="blurSlider" min="4" max="200" value="80">
+
+    <div class="btn-row">
+      <button class="primary" id="processBtn">Обработать видео</button>
+      <button class="danger" id="cancelBtn" style="display:none;">Отменить</button>
+    </div>
+
+    <div class="progress-wrap" id="progressWrap" style="display:none;">
+      <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+    </div>
+
+    <div class="error" id="errorBox" style="display:none;"></div>
+    <div class="note">Каждая зона считается независимо. Пока обработка идёт, канвас показывает live-превью с уже применённым размытием.</div>
+  </section>
+
+  <div class="result" id="resultBox">
+    <label class="field-label">Результат</label>
+    <video id="resultVideo" controls playsinline style="width:100%; border:1px solid var(--line); border-radius:2px;"></video>
+    <div class="btn-row">
+      <a id="downloadLink" download="blurred.mp4" style="flex:1; text-decoration:none;"><button class="primary" type="button">Скачать файл</button></a>
+    </div>
+    <div class="note">На iPhone: после скачивания открой файл и нажми «Поделиться» → «Сохранить видео», чтобы добавить его в Фото.</div>
+  </div>
+
+  <footer>
+    Обработка происходит полностью на устройстве, в браузере — видео никуда не отправляется.<br>
+    Используй только на своих видео или на контенте, на который у тебя есть права.
+  </footer>
+</div>
+
+<script>
+(function(){
+  const fileInput = document.getElementById('fileInput');
+  const pickBtn = document.getElementById('pickBtn');
+  const stage = document.getElementById('stage');
+  const stageInner = document.getElementById('stageInner');
+  const emptyState = document.getElementById('emptyState');
+  const loadingState = document.getElementById('loadingState');
+  const video = document.getElementById('sourceVideo');
+  const canvas = document.getElementById('previewCanvas');
+  const ctx = canvas.getContext('2d', {alpha:false, desynchronized:true});
+  const zonesLayer = document.getElementById('zonesLayer');
+
+  const zonesSection = document.getElementById('zonesSection');
+  const addZoneBtn = document.getElementById('addZoneBtn');
+  const zonesRow = document.getElementById('zonesRow');
+  const zonePanel = document.getElementById('zonePanel');
+  const zonePanelTitle = document.getElementById('zonePanelTitle');
+  const zonePanelSub = document.getElementById('zonePanelSub');
+  const btnSetStart = document.getElementById('btnSetStart');
+  const btnSetEnd = document.getElementById('btnSetEnd');
+  const btnResetRange = document.getElementById('btnResetRange');
+  const btnDeleteZone = document.getElementById('btnDeleteZone');
+
+  const controls = document.getElementById('controls');
+  const blurSlider = document.getElementById('blurSlider');
+  const blurVal = document.getElementById('blurVal');
+  const processBtn = document.getElementById('processBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const barFill = document.getElementById('barFill');
+  const errorBox = document.getElementById('errorBox');
+  const importErrorBox = document.getElementById('importErrorBox');
+  const resultBox = document.getElementById('resultBox');
+  const resultVideo = document.getElementById('resultVideo');
+  const downloadLink = document.getElementById('downloadLink');
+  const readout = document.getElementById('readout');
+  const timeReadout = document.getElementById('timeReadout');
+  const recIndicator = document.getElementById('recIndicator');
+  const scrubWrap = document.getElementById('scrubWrap');
+  const scrubBar = document.getElementById('scrubBar');
+  const kfTrack = document.getElementById('kfTrack');
+
+  let videoW = 0, videoH = 0;
+  let zones = [];
+  let zoneCounter = 0;
+  let activeZoneId = null;
+
+  let recorder = null;
+  let recordedChunks = [];
+  let rafId = null;
+  let useVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+  let cancelled = false;
+  let loadTimeoutId = null;
+  let activeStrength = 80;
+
+  let draggingZone = null;
+  let dragMode = null;
+  let dragStart = {x:0, y:0};
+  let dragRectStart = {x:0, y:0, w:0, h:0};
+
+  function clamp(v,min,max){ return Math.min(Math.max(v,min),max); }
+  function lerp(a,b,f){ return a + (b-a)*f; }
+
+  pickBtn.addEventListener('click', () => fileInput.click());
+
+  // ---------- Импорт видео ----------
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    resetUI();
+    clearAllZones();
+    emptyState.style.display = 'none';
+    stageInner.style.display = 'none';
+    scrubWrap.style.display = 'none';
+    zonesSection.style.display = 'none';
+    loadingState.style.display = 'flex';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.load();
+    armLoadTimeout();
+  });
+
+  video.addEventListener('loadedmetadata', () => {
+    clearTimeout(loadTimeoutId);
+    videoW = video.videoWidth;
+    videoH = video.videoHeight;
+    canvas.width = videoW;
+    canvas.height = videoH;
+    stageInner.style.aspectRatio = videoW + ' / ' + videoH;
+    loadingState.style.display = 'none';
+    stageInner.style.display = 'block';
+    controls.style.display = 'block';
+    zonesSection.style.display = 'block';
+    readout.style.display = 'flex';
+    scrubWrap.style.display = 'block';
+    scrubBar.max = isFinite(video.duration) ? video.duration : 0;
+    scrubBar.value = 0;
+    video.currentTime = 0;
+    updateTimeReadout();
+    renderKeyframeMarkers();
+  });
+
+  video.addEventListener('error', () => {
+    loadingState.style.display = 'none';
+    emptyState.style.display = 'flex';
+    const codes = {1:'загрузка прервана', 2:'сетевая ошибка', 3:'не удалось декодировать видео', 4:'формат не поддерживается браузером'};
+    const code = video.error ? video.error.code : null;
+    const detail = codes[code] || 'неизвестная ошибка';
+    showImportError('Не удалось загрузить видео (' + detail + '). Попробуй другой файл, либо открой это видео один раз в приложении Фото (чтобы оно точно скачалось с iCloud), и выбери его снова.');
+  });
+
+  function armLoadTimeout(){
+    clearTimeout(loadTimeoutId);
+    loadTimeoutId = setTimeout(() => {
+      if (loadingState.style.display !== 'none'){
+        loadingState.style.display = 'none';
+        emptyState.style.display = 'flex';
+        showImportError('Видео грузится слишком долго и, похоже, зависло. Попробуй выбрать файл ещё раз или другой ролик.');
+      }
+    }, 25000);
+  }
+
+  video.addEventListener('timeupdate', () => {
+    if (!recorder) {
+      scrubBar.value = video.currentTime;
+      updateTimeReadout();
+      layoutAllZoneBoxes();
+    }
+  });
+
+  scrubBar.addEventListener('input', () => {
+    if (recorder) return;
+    video.currentTime = parseFloat(scrubBar.value);
+    layoutAllZoneBoxes();
+  });
+
+  function fmtTime(t){
+    if (!isFinite(t)) return '00:00';
+    const m = Math.floor(t/60).toString().padStart(2,'0');
+    const s = Math.floor(t%60).toString().padStart(2,'0');
+    return m+':'+s;
+  }
+  function updateTimeReadout(){
+    timeReadout.textContent = fmtTime(video.currentTime) + ' / ' + fmtTime(video.duration);
+  }
+
+  window.addEventListener('resize', layoutAllZoneBoxes);
+
+  // ---------- Управление зонами ----------
+  function getActiveZone(){
+    return zones.find(z => z.id === activeZoneId) || null;
+  }
+
+  function clearAllZones(){
+    zones.forEach(z => z.el && z.el.remove());
+    zones = [];
+    zoneCounter = 0;
+    activeZoneId = null;
+    renderZoneChips();
+    updateZonePanel();
+    renderKeyframeMarkers();
+  }
+
+  function addZone(){
+    zoneCounter++;
+    const t = video.currentTime || 0;
+    const id = 'zone_' + zoneCounter;
+    const rect = {x:0.35, y:0.4, w:0.3, h:0.2};
+    const zone = {
+      id, name: 'Зона ' + zoneCounter,
+      startTime: t, endTime: null,
+      keyframes: [{t: t, x:rect.x, y:rect.y, w:rect.w, h:rect.h}],
+      el: null,
+      tinyCanvas: document.createElement('canvas'),
+      tinyCtx: null,
+      offCanvas: document.createElement('canvas'),
+      offCtx: null,
+      _liveRect: null
+    };
+    zone.tinyCtx = zone.tinyCanvas.getContext('2d', {alpha:false});
+    zone.offCtx = zone.offCanvas.getContext('2d', {alpha:false});
+    createZoneDOM(zone);
+    zones.push(zone);
+    selectZone(id);
+    renderZoneChips();
+    layoutAllZoneBoxes();
+    renderKeyframeMarkers();
+  }
+
+  function removeZone(id){
+    const idx = zones.findIndex(z => z.id === id);
+    if (idx === -1) return;
+    zones[idx].el && zones[idx].el.remove();
+    zones.splice(idx, 1);
+    if (activeZoneId === id){
+      activeZoneId = zones.length ? zones[zones.length-1].id : null;
+    }
+    renderZoneChips();
+    updateZonePanel();
+    layoutAllZoneBoxes();
+    renderKeyframeMarkers();
+  }
+
+  function selectZone(id){
+    activeZoneId = id;
+    zones.forEach(z => {
+      const isActive = z.id === id;
+      z.el.style.pointerEvents = isActive ? 'auto' : 'none';
+      z.el.classList.toggle('dimmed', !isActive);
+    });
+    renderZoneChips();
+    updateZonePanel();
+    renderKeyframeMarkers();
+  }
+
+  function renderZoneChips(){
+    zonesRow.innerHTML = '';
+    zones.forEach(z => {
+      const chip = document.createElement('div');
+      chip.className = 'zone-chip' + (z.id === activeZoneId ? ' active' : '');
+      const label = document.createElement('span');
+      label.textContent = z.name;
+      chip.appendChild(label);
+      const del = document.createElement('span');
+      del.className = 'del';
+      del.textContent = '✕';
+      del.addEventListener('click', (e) => { e.stopPropagation(); removeZone(z.id); });
+      chip.appendChild(del);
+      chip.addEventListener('click', () => selectZone(z.id));
+      zonesRow.appendChild(chip);
+    });
+  }
+
+  function updateZonePanel(){
+    const zone = getActiveZone();
+    if (!zone){ zonePanel.style.display = 'none'; return; }
+    zonePanel.style.display = 'block';
+    zonePanelTitle.textContent = zone.name;
+    const startTxt = fmtTime(zone.startTime);
+    const endTxt = zone.endTime == null ? 'до конца' : fmtTime(zone.endTime);
+    const kfTxt = zone.keyframes.length > 1 ? (', точек движения: ' + zone.keyframes.length) : '';
+    zonePanelSub.textContent = 'активна: ' + startTxt + ' — ' + endTxt + kfTxt;
+  }
+
+  btnSetStart.addEventListener('click', () => {
+    const zone = getActiveZone();
+    if (!zone) return;
+    zone.startTime = video.currentTime;
+    if (zone.endTime != null && zone.startTime > zone.endTime) zone.endTime = null;
+    updateZonePanel();
+    layoutAllZoneBoxes();
+  });
+  btnSetEnd.addEventListener('click', () => {
+    const zone = getActiveZone();
+    if (!zone) return;
+    zone.endTime = video.currentTime;
+    if (zone.startTime > zone.endTime) zone.startTime = Math.max(0, zone.endTime - 0.1);
+    updateZonePanel();
+    layoutAllZoneBoxes();
+  });
+  btnResetRange.addEventListener('click', () => {
+    const zone = getActiveZone();
+    if (!zone) return;
+    zone.startTime = 0;
+    zone.endTime = null;
+    updateZonePanel();
+    layoutAllZoneBoxes();
+  });
+  btnDeleteZone.addEventListener('click', () => {
+    if (activeZoneId) removeZone(activeZoneId);
+  });
+
+  addZoneBtn.addEventListener('click', addZone);
+
+  // ---------- Интерполяция позиции по ключевым точкам ----------
+  function getZoneRectAtTime(zone, t){
+    const kfs = zone.keyframes;
+    if (kfs.length === 1) return kfs[0];
+    if (t <= kfs[0].t) return kfs[0];
+    if (t >= kfs[kfs.length-1].t) return kfs[kfs.length-1];
+    for (let i = 0; i < kfs.length - 1; i++){
+      if (t >= kfs[i].t && t <= kfs[i+1].t){
+        const span = kfs[i+1].t - kfs[i].t;
+        const f = span > 0 ? (t - kfs[i].t) / span : 0;
+        return {
+          x: lerp(kfs[i].x, kfs[i+1].x, f),
+          y: lerp(kfs[i].y, kfs[i+1].y, f),
+          w: lerp(kfs[i].w, kfs[i+1].w, f),
+          h: lerp(kfs[i].h, kfs[i+1].h, f)
+        };
+      }
+    }
+    return kfs[kfs.length-1];
+  }
+
+  function upsertKeyframe(zone, t, rect){
+    const eps = 0.05;
+    const existing = zone.keyframes.find(k => Math.abs(k.t - t) < eps);
+    if (existing){
+      existing.x = rect.x; existing.y = rect.y; existing.w = rect.w; existing.h = rect.h;
+    } else {
+      zone.keyframes.push({t, x:rect.x, y:rect.y, w:rect.w, h:rect.h});
+      zone.keyframes.sort((a,b) => a.t - b.t);
+    }
+    renderKeyframeMarkers();
+    updateZonePanel();
+  }
+
+  function renderKeyframeMarkers(){
+    kfTrack.innerHTML = '';
+    const zone = getActiveZone();
+    if (!zone || !video.duration || !isFinite(video.duration)) return;
+    zone.keyframes.forEach(k => {
+      const dot = document.createElement('div');
+      dot.className = 'kf-dot';
+      dot.style.left = (k.t / video.duration * 100) + '%';
+      kfTrack.appendChild(dot);
+    });
+  }
+
+  // ---------- DOM-рамка зоны + жесты ----------
+  function createZoneDOM(zone){
+    const el = document.createElement('div');
+    el.className = 'crop';
+    el.innerHTML =
+      '<div class="zone-label">' + zone.name + '</div>' +
+      '<div class="corner tl"></div><div class="corner tr"></div>' +
+      '<div class="corner bl"></div><div class="corner br"></div>' +
+      '<div class="handle"></div>';
+    zonesLayer.appendChild(el);
+    zone.el = el;
+    const handle = el.querySelector('.handle');
+
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target === handle) return;
+      if (zone.id !== activeZoneId) return;
+      startZoneDrag(zone, 'move', e);
+    });
+    handle.addEventListener('pointerdown', (e) => {
+      if (zone.id !== activeZoneId) return;
+      startZoneDrag(zone, 'resize', e);
+      e.stopPropagation();
+    });
+  }
+
+  function startZoneDrag(zone, mode, e){
+    e.preventDefault();
+    draggingZone = zone;
+    dragMode = mode;
+    dragStart = {x:e.clientX, y:e.clientY};
+    dragRectStart = {...getZoneRectAtTime(zone, video.currentTime)};
+    window.addEventListener('pointermove', onZoneDrag);
+    window.addEventListener('pointerup', endZoneDrag);
+  }
+
+  function onZoneDrag(e){
+    const rect = stageInner.getBoundingClientRect();
+    const dx = (e.clientX - dragStart.x) / rect.width;
+    const dy = (e.clientY - dragStart.y) / rect.height;
+    let r = {...dragRectStart};
+    if (dragMode === 'move'){
+      r.x = clamp(dragRectStart.x + dx, 0, 1 - dragRectStart.w);
+      r.y = clamp(dragRectStart.y + dy, 0, 1 - dragRectStart.h);
+    } else if (dragMode === 'resize'){
+      r.w = clamp(dragRectStart.w + dx, 0.05, 1 - dragRectStart.x);
+      r.h = clamp(dragRectStart.h + dy, 0.05, 1 - dragRectStart.y);
+    }
+    draggingZone._liveRect = r;
+    layoutZoneBox(draggingZone, r);
+  }
+
+  function endZoneDrag(){
+    if (draggingZone){
+      const r = draggingZone._liveRect || getZoneRectAtTime(draggingZone, video.currentTime);
+      draggingZone._liveRect = null;
+      upsertKeyframe(draggingZone, video.currentTime, r);
+    }
+    draggingZone = null;
+    dragMode = null;
+    window.removeEventListener('pointermove', onZoneDrag);
+    window.removeEventListener('pointerup', endZoneDrag);
+  }
+
+  function layoutZoneBox(zone, rect){
+    const r = stageInner.getBoundingClientRect();
+    zone.el.style.left = (rect.x * r.width) + 'px';
+    zone.el.style.top = (rect.y * r.height) + 'px';
+    zone.el.style.width = (rect.w * r.width) + 'px';
+    zone.el.style.height = (rect.h * r.height) + 'px';
+  }
+
+  function layoutAllZoneBoxes(){
+    const t = video.currentTime;
+    zones.forEach(zone => {
+      const rect = zone._liveRect || getZoneRectAtTime(zone, t);
+      layoutZoneBox(zone, rect);
+      const inRange = t >= zone.startTime && (zone.endTime == null || t <= zone.endTime);
+      zone.el.classList.toggle('out-of-range', !inRange);
+    });
+  }
+
+  // ---------- Геометрия для мозаичного размытия ----------
+  function computeGeometryForRect(rect, blurRadius){
+    const rx = Math.round(rect.x * videoW);
+    const ry = Math.round(rect.y * videoH);
+    const rw = Math.round(rect.w * videoW);
+    const rh = Math.round(rect.h * videoH);
+
+    const padXpx = Math.max(rect.w * videoW * 0.4, blurRadius * 2.2);
+    const padYpx = Math.max(rect.h * videoH * 0.4, blurRadius * 2.2);
+    const padX = padXpx / videoW, padY = padYpx / videoH;
+    const px0 = clamp(rect.x - padX, 0, 1);
+    const py0 = clamp(rect.y - padY, 0, 1);
+    const px1 = clamp(rect.x + rect.w + padX, 0, 1);
+    const py1 = clamp(rect.y + rect.h + padY, 0, 1);
+
+    const srcX = Math.round(px0 * videoW);
+    const srcY = Math.round(py0 * videoH);
+    const srcW = Math.max(1, Math.round((px1 - px0) * videoW));
+    const srcH = Math.max(1, Math.round((py1 - py0) * videoH));
+
+    const cropX = Math.round((rect.x - px0) / (px1 - px0) * srcW);
+    const cropY = Math.round((rect.y - py0) / (py1 - py0) * srcH);
+
+    return {rx, ry, rw, rh, srcX, srcY, srcW, srcH, cropX, cropY};
+  }
+
+  function ensureZoneCanvases(zone, g, strength){
+    const blockPx = Math.max(2, strength);
+    const tinyW = Math.max(1, Math.round(g.srcW / blockPx));
+    const tinyH = Math.max(1, Math.round(g.srcH / blockPx));
+    if (zone.offCanvas.width !== g.srcW || zone.offCanvas.height !== g.srcH){
+      zone.offCanvas.width = g.srcW;
+      zone.offCanvas.height = g.srcH;
+      zone.offCtx.imageSmoothingEnabled = true;
+      zone.offCtx.filter = 'blur(' + Math.round(strength * 0.15) + 'px)';
+    }
+    if (zone.tinyCanvas.width !== tinyW || zone.tinyCanvas.height !== tinyH){
+      zone.tinyCanvas.width = tinyW;
+      zone.tinyCanvas.height = tinyH;
+      zone.tinyCtx.imageSmoothingEnabled = true;
+    }
+  }
+
+  // ---------- Обработка/экспорт ----------
+  blurSlider.addEventListener('input', () => {
+    blurVal.textContent = blurSlider.value;
+  });
+
+  processBtn.addEventListener('click', startProcessing);
+  cancelBtn.addEventListener('click', () => {
+    cancelled = true;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    video.pause();
+  });
+
+  function pickMimeType(){
+    const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    for (const c of candidates){
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+    }
+    return '';
+  }
+
+  function startProcessing(){
+    errorBox.style.display = 'none';
+    resultBox.classList.remove('show');
+    cancelled = false;
+
+    if (!window.MediaRecorder){
+      showError('Этот браузер не поддерживает запись видео (MediaRecorder). Попробуй обновить Safari или использовать Chrome.');
+      return;
+    }
+    if (zones.length === 0){
+      showError('Добавь хотя бы одну зону размытия перед обработкой.');
+      return;
+    }
+
+    activeStrength = parseFloat(blurSlider.value);
+    zones.forEach(z => {
+      z.offCanvas.width = 0; z.offCanvas.height = 0;
+      z.tinyCanvas.width = 0; z.tinyCanvas.height = 0;
+    });
+
+    zonesLayer.querySelectorAll('.crop').forEach(el => el.style.pointerEvents = 'none');
+    stageInner.classList.add('processing');
+    scrubWrap.style.display = 'none';
+    zonesSection.style.display = 'none';
+
+    let stream;
+    try {
+      stream = canvas.captureStream(30);
+    } catch(e){
+      showError('Не удалось захватить поток с canvas: ' + e.message);
+      return;
+    }
+
+    try {
+      const audioStream = video.captureStream ? video.captureStream() : null;
+      if (audioStream){
+        audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
+      }
+    } catch(e){ /* аудио недоступно — продолжаем без звука */ }
+
+    const mimeType = pickMimeType();
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, {mimeType}) : new MediaRecorder(stream);
+    } catch(e){
+      showError('Не удалось создать запись: ' + e.message);
+      return;
+    }
+
+    recordedChunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    recorder.onstop = onRecordingStop;
+
+    processBtn.style.display = 'none';
+    cancelBtn.style.display = 'block';
+    progressWrap.style.display = 'block';
+    recIndicator.style.visibility = 'visible';
+
+    video.currentTime = 0;
+    video.muted = true;
+
+    recorder.start(250);
+
+    video.play().then(() => {
+      startRenderLoop();
+    }).catch(err => {
+      showError('Не удалось запустить видео: ' + err.message);
+      stopProcessing();
+    });
+
+    video.onended = () => {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    };
+  }
+
+  function startRenderLoop(){
+    if (useVFC){
+      video.requestVideoFrameCallback(onVideoFrame);
+    } else {
+      rafId = requestAnimationFrame(renderLoop);
+    }
+  }
+  function onVideoFrame(){
+    if (cancelled || video.paused || video.ended) return;
+    drawBlurredFrame();
+    updateTimeReadout();
+    updateProgressBar();
+    video.requestVideoFrameCallback(onVideoFrame);
+  }
+  function renderLoop(){
+    if (cancelled || !video || video.paused || video.ended) return;
+    drawBlurredFrame();
+    updateTimeReadout();
+    updateProgressBar();
+    rafId = requestAnimationFrame(renderLoop);
+  }
+  function updateProgressBar(){
+    const pct = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+    barFill.style.width = pct + '%';
+  }
+
+  function drawBlurredFrame(){
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const t = video.currentTime;
+    for (const zone of zones){
+      if (t < zone.startTime) continue;
+      if (zone.endTime != null && t > zone.endTime) continue;
+      const rect = getZoneRectAtTime(zone, t);
+      if (rect.w <= 0 || rect.h <= 0) continue;
+      const g = computeGeometryForRect(rect, activeStrength);
+      if (g.rw <= 0 || g.rh <= 0) continue;
+      ensureZoneCanvases(zone, g, activeStrength);
+      zone.tinyCtx.drawImage(video, g.srcX, g.srcY, g.srcW, g.srcH, 0, 0, zone.tinyCanvas.width, zone.tinyCanvas.height);
+      zone.offCtx.drawImage(zone.tinyCanvas, 0, 0, zone.tinyCanvas.width, zone.tinyCanvas.height, 0, 0, g.srcW, g.srcH);
+      ctx.drawImage(zone.offCanvas, g.cropX, g.cropY, g.rw, g.rh, g.rx, g.ry, g.rw, g.rh);
+    }
+  }
+
+  function onRecordingStop(){
+    if (cancelled){
+      stopProcessing();
+      return;
+    }
+    const mimeType = recorder.mimeType || 'video/webm';
+    const blob = new Blob(recordedChunks, {type: mimeType});
+    const url = URL.createObjectURL(blob);
+    resultVideo.src = url;
+    downloadLink.href = url;
+    downloadLink.download = mimeType.includes('mp4') ? 'blurred.mp4' : 'blurred.webm';
+    resultBox.classList.add('show');
+    stopProcessing();
+  }
+
+  function stopProcessing(){
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    processBtn.style.display = 'block';
+    cancelBtn.style.display = 'none';
+    progressWrap.style.display = 'none';
+    recIndicator.style.visibility = 'hidden';
+    barFill.style.width = '0%';
+    stageInner.classList.remove('processing');
+    zonesSection.style.display = 'block';
+    if (activeZoneId){
+      const z = getActiveZone();
+      if (z) z.el.style.pointerEvents = 'auto';
+    }
+    video.pause();
+    recorder = null;
+    if (videoW) {
+      scrubWrap.style.display = 'block';
+      video.currentTime = 0;
+      scrubBar.value = 0;
+      layoutAllZoneBoxes();
+    }
+  }
+
+  function showError(msg){
+    errorBox.textContent = msg;
+    errorBox.style.display = 'block';
+  }
+  function showImportError(msg){
+    importErrorBox.textContent = msg;
+    importErrorBox.style.display = 'block';
+  }
+
+  function resetUI(){
+    resultBox.classList.remove('show');
+    errorBox.style.display = 'none';
+    importErrorBox.style.display = 'none';
+    loadingState.style.display = 'none';
+    clearTimeout(loadTimeoutId);
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    recorder = null;
+    processBtn.style.display = 'block';
+    cancelBtn.style.display = 'none';
+    progressWrap.style.display = 'none';
+    recIndicator.style.visibility = 'hidden';
+    barFill.style.width = '0%';
+    stageInner.classList.remove('processing');
+  }
+})();
+</script>
+</body>
+</html>
